@@ -468,12 +468,12 @@ bootstrap_pkg() {
 		fi
 		if [ -f "${singbox_workdir}/config.json.tmp" ]; then
 			if "$pkg_dst_cmd" check -c "${singbox_workdir}/config.json.tmp" 2>&1; then
-				"$pkg_dst_cmd" format -c "${singbox_workdir}/config.json.tmp" >"${singbox_workdir}/config.json.tmp.tmp"
-				mv "${singbox_workdir}/config.json.tmp.tmp" "${singbox_workdir}/config.json.tmp"
+				sed_i 's/"level": "info"/"level": "info","output": "box.log"/g' "${singbox_workdir}/config.json.tmp"
 				if [ -n "${NIC:-}" ]; then
-					sed -i "s/\"auto_detect_interface\": true/\"default_interface\": \"$NIC\"/g" "${singbox_workdir}/config.json.tmp"
+					sed_i "s/\"auto_detect_interface\": true/\"default_interface\": \"$NIC\"/g" "${singbox_workdir}/config.json.tmp"
 				fi
-				mv "${singbox_workdir}/config.json.tmp" "${singbox_workdir}/config.json"
+				"$pkg_dst_cmd" format -c "${singbox_workdir}/config.json.tmp" >"${singbox_workdir}/config.json"
+				rm -rf "${singbox_workdir}/config.json.tmp"
 				echo -e "Saved as ${singbox_workdir}/config.json"
 			else
 				rm -rf "${singbox_workdir}/config.json.tmp"
@@ -837,7 +837,7 @@ esac
 
 WEBI_PKG="sing-box"
 PKG_NAME="sing-box"
-PKG_VERSION="${VERSION:-1.2.7}"
+PKG_VERSION="${VERSION:-1.3.0}"
 PKG_TAG="v${PKG_VERSION}"
 PKG_RELEASES="https://ghproxy.com/https://github.com/SagerNet/sing-box/releases/download"
 # PKG_RELEASES="https://repo.o2cdn.icu/cached-apps/sing-box"
