@@ -2,7 +2,7 @@
 
 init_arch() {
 	ARCH=$(uname -m)
-	case $ARCH in
+	case $ARCH 在
 	aarch64 | arm64)
 		ARCH="arm64"
 		;;
@@ -27,7 +27,7 @@ init_arch() {
 
 init_os() {
 	OS=$(uname | tr '[:upper:]' '[:lower:]')
-	case "$OS" in
+	case "$OS" 在
 	cygwin* | mingw* | msys*)
 		OS='windows'
 		;;
@@ -69,7 +69,7 @@ ask_password() {
 					# 将用户输入的按键转换为十六进制字符代码
 					# 注意，如果是回车或换行符，则返回一个空字符串
 					code=${char:+$(printf '%02x' "'$char'")}
-					case "$code" in
+					case "$code" 在
 					'' | 0a | 0d) break ;; # 回车、换行符或者return键，退出循环
 					08 | 7f)               # 退格或删除键
 						if [ -n "$password" ]; then
@@ -122,7 +122,7 @@ process_stop() {
 }
 
 sudo_cmd() {
-	case "$OS" in
+	case "$OS" 在
 	darwin)
 		if ! is_root; then
 			echo "$password" | sudo -S "${@}"
@@ -238,7 +238,7 @@ bootstrap_pkg() {
 
 	is_interactive_shell() {
 		# $- shows shell flags (error,unset,interactive,etc)
-		case $- in
+		case $- 在
 		*i*)
 			# true
 			return 0
@@ -316,7 +316,7 @@ bootstrap_pkg() {
 				unzip "${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME" >__unzip__.log
 			elif [ "exe" = "$PKG_EXT" ]; then
 				echo "Moving ${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME"
-				mv "${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME" .
+				mv "${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME" 。
 			elif [ "xz" = "$PKG_EXT" ]; then
 				echo "Inflating ${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME"
 				unxz -c "${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME" >"$(basename "$PKG_FILE_NAME")"
@@ -544,14 +544,14 @@ bootstrap_pkg() {
 		echo -e "开始启动 sing-box ,请稍等..."
 		sleep 3
 
-		case "$OS" in
+		case "$OS" 在
 		linux)
 			trap singbox_stop_message INT
 
 			sudo_cmd echo "" >"$singbox_log_file"
 
 			(
-				for i in {1..8}; do
+				for i 在 {1..8}; do
 					if grep -q "sing-box started" "$singbox_log_file"; then
 						singbox_start_message
 						sleep 3
@@ -562,7 +562,7 @@ bootstrap_pkg() {
 				done
 			) &
 
-			for i in {1..2}; do
+			for i 在 {1..2}; do
 				sudo_cmd "$pkg_dst_cmd" run -D "${singbox_workdir}" && break || sleep 1s
 			done
 
@@ -588,7 +588,7 @@ bootstrap_pkg() {
 			sudo_cmd echo "" >"$singbox_log_file"
 
 			(
-				for i in {1..8}; do
+				for i 在 {1..8}; do
 					if grep -q "sing-box started" "$singbox_log_file"; then
 						singbox_start_message
 						sleep 3
@@ -599,7 +599,7 @@ bootstrap_pkg() {
 				done
 			) &
 
-			for i in {1..2}; do
+			for i 在 {1..2}; do
 				sudo_cmd "$pkg_dst_cmd" run -D "${singbox_workdir}" && break || sleep 1s
 			done
 
@@ -619,7 +619,7 @@ bootstrap_pkg() {
 			echo "" >"$singbox_log_file"
 
 			(
-				for i in {1..60}; do
+				for i 在 {1..60}; do
 					if grep -q "sing-box started" "$singbox_log_file"; then
 						if grep -q "inbound/tun.*started" "$singbox_log_file"; then
 							singbox_start_message
@@ -647,7 +647,7 @@ bootstrap_pkg() {
 				done
 			) &
 
-			for i in {1..2}; do
+			for i 在 {1..2}; do
 				"$pkg_dst_cmd" run -D "${singbox_workdir}" && break || sleep 1s
 			done
 
@@ -791,8 +791,8 @@ RESET='\033[0m'
 
 args=$(awk 'BEGIN { for(i = 1; i < ARGC; i++) print ARGV[i] }' "$@")
 
-for arg in $args; do
-	case $arg in
+for arg 在 $args; do
+	case $arg 在
 	https://*)
 		URL=$arg
 		;;
@@ -817,7 +817,7 @@ done
 init_arch
 init_os
 
-case "$OS" in
+case "$OS" 在
 darwin)
 	ask_password
 	sudo_cmd pkill sing-box >/dev/null 2>&1
@@ -837,7 +837,7 @@ esac
 
 WEBI_PKG="sing-box"
 PKG_NAME="sing-box"
-PKG_VERSION="${VERSION:-1.3.0}"
+PKG_VERSION="${VERSION:-1.3.4}"
 PKG_TAG="v${PKG_VERSION}"
 PKG_RELEASES="https://ghproxy.com/https://github.com/SagerNet/sing-box/releases/download"
 # PKG_RELEASES="https://repo.o2cdn.icu/cached-apps/sing-box"
@@ -846,7 +846,7 @@ if [ "$OS" = "windows" ]; then
 else
 	PKG_EXT=tar.gz
 fi
-PKG_FILE_NAME="${PKG_NAME}-${PKG_VERSION}-${OS}-${ARCH}.${PKG_EXT}"
+PKG_FILE_NAME="${PKG_NAME}-${PKG_VERSION}-${OS}-${ARCH}。${PKG_EXT}"
 PKG_DOWNLOAD_URL="${PKG_RELEASES}/${PKG_TAG}/${PKG_FILE_NAME}"
 PKG_DOWNLOAD_PATH="${HOME}/.local/tmp/${PKG_NAME}"
 
