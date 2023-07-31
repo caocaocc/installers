@@ -791,8 +791,8 @@ RESET='\033[0m'
 
 args=$(awk 'BEGIN { for(i = 1; i < ARGC; i++) print ARGV[i] }' "$@")
 
-for arg 在 $args; do
-	case $arg 在
+for arg in $args; do
+	case $arg in
 	https://*)
 		URL=$arg
 		;;
@@ -817,7 +817,7 @@ done
 init_arch
 init_os
 
-case "$OS" 在
+case "$OS" in
 darwin)
 	ask_password
 	sudo_cmd pkill sing-box >/dev/null 2>&1
@@ -846,7 +846,7 @@ if [ "$OS" = "windows" ]; then
 else
 	PKG_EXT=tar.gz
 fi
-PKG_FILE_NAME="${PKG_NAME}-${PKG_VERSION}-${OS}-${ARCH}。${PKG_EXT}"
+PKG_FILE_NAME="${PKG_NAME}-${PKG_VERSION}-${OS}-${ARCH}.${PKG_EXT}"
 PKG_DOWNLOAD_URL="${PKG_RELEASES}/${PKG_TAG}/${PKG_FILE_NAME}"
 PKG_DOWNLOAD_PATH="${HOME}/.local/tmp/${PKG_NAME}"
 
