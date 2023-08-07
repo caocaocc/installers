@@ -837,7 +837,7 @@ esac
 
 WEBI_PKG="sing-box"
 PKG_NAME="sing-box"
-PKG_VERSION="${VERSION:-1.3.5}"
+PKG_VERSION="${VERSION:-1.3.6}"
 PKG_TAG="v${PKG_VERSION}"
 PKG_RELEASES="https://ghproxy.com/https://github.com/SagerNet/sing-box/releases/download"
 # PKG_RELEASES="https://repo.o2cdn.icu/cached-apps/sing-box"
