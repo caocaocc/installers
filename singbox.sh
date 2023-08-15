@@ -276,7 +276,17 @@ bootstrap_pkg() {
 
 		# It's only 2020, we can't expect to have reliable CLI tools
 		# to tell us the size of a file as part of a base system...
-		if [ -n "$WEBI_WGET" ]; then
+		if [ -n "$WEBI_CURL" ]; then
+			# Neither GNU nor BSD curl have sane resume download options, hence we don't bother
+			# TODO curl -fsSL --remote-name --remote-header-name --write-out "$my_url"
+			my_show_progress="-#"
+			if is_interactive_shell; then
+				my_show_progress=""
+			fi
+			# shellcheck disable=SC2086
+			# we want the flags to be split
+			curl -kfSL $my_show_progress -H "User-Agent: curl $UA" "$my_url" -o "$my_dl.part"
+		else
 			# wget has resumable downloads
 			# TODO wget -c --content-disposition "$my_url"
 			set +e
@@ -289,16 +299,6 @@ bootstrap_pkg() {
 				exit 1
 			fi
 			set -e
-		else
-			# Neither GNU nor BSD curl have sane resume download options, hence we don't bother
-			# TODO curl -fsSL --remote-name --remote-header-name --write-out "$my_url"
-			my_show_progress="-#"
-			if is_interactive_shell; then
-				my_show_progress=""
-			fi
-			# shellcheck disable=SC2086
-			# we want the flags to be split
-			curl -kfSL $my_show_progress -H "User-Agent: curl $UA" "$my_url" -o "$my_dl.part"
 		fi
 		mv "$my_dl.part" "$my_dl"
 		echo "Saved as $my_dl"
@@ -414,7 +414,13 @@ bootstrap_pkg() {
 
 		echo "Downloading $my_name from $my_url"
 
-		if [ -n "$WEBI_WGET" ]; then
+		if [ -n "$WEBI_CURL" ]; then
+			my_show_progress="-#"
+			if is_interactive_shell; then
+				my_show_progress=""
+			fi
+			curl -kfSL $my_show_progress -H "User-Agent: curl $UA" "$my_url" -o "$my_dl.part"
+		else
 			set +e
 			my_show_progress=""
 			if is_interactive_shell; then
@@ -425,12 +431,6 @@ bootstrap_pkg() {
 				exit 1
 			fi
 			set -e
-		else
-			my_show_progress="-#"
-			if is_interactive_shell; then
-				my_show_progress=""
-			fi
-			curl -kfSL $my_show_progress -H "User-Agent: curl $UA" "$my_url" -o "$my_dl.part"
 		fi
 		mv "$my_dl.part" "$my_dl"
 	}
