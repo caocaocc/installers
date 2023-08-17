@@ -579,7 +579,7 @@ bootstrap_pkg() {
 		darwin)
 			trap singbox_stop_message INT
 
-			DNS=${DNS:-223.5.5.5}
+			DNS=${DNS:-114.114.114.114}
 			V6DNS=${V6DNS:-2400:3200::1}
 			sudo_cmd networksetup -setdnsservers Wi-Fi "$DNS"
 			sudo_cmd dscacheutil -flushcache
