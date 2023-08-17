@@ -581,7 +581,7 @@ bootstrap_pkg() {
 
 			DNS=${DNS:-223.5.5.5}
 			V6DNS=${V6DNS:-2400:3200::1}
-			sudo_cmd networksetup -setdnsservers Wi-Fi "$DNS" "$V6DNS"
+			sudo_cmd networksetup -setdnsservers Wi-Fi "$DNS"
 			sudo_cmd dscacheutil -flushcache
 			sudo_cmd killall -HUP mDNSResponder
 
