@@ -472,6 +472,9 @@ bootstrap_pkg() {
 				if [ -n "${NIC:-}" ]; then
 					sed_i "s/\"auto_detect_interface\": true/\"default_interface\": \"$NIC\"/g" "${singbox_workdir}/config.json.tmp"
 				fi
+				if [ -n "${DNS:-}" ]; then
+					sed_i "s/114.114.114.114/"$DNS"/g" "${singbox_workdir}/config.json.tmp"
+				fi
 				"$pkg_dst_cmd" format -c "${singbox_workdir}/config.json.tmp" >"${singbox_workdir}/config.json"
 				rm -rf "${singbox_workdir}/config.json.tmp"
 				echo -e "Saved as ${singbox_workdir}/config.json"
