@@ -469,7 +469,7 @@ bootstrap_pkg() {
 
 		if grep -q "\[\]" "${singbox_workdir}/config.json.tmp"; then
 			echo ""
-			echo -e "${RED}服务已过期,请打开'auVPN 账户信息'邮件中的登录链接,并重新复制一键脚本.${RESET}"
+			echo -e "${RED}此服务已过期,请打开'auVPN 账户信息'邮件中的登录链接,并重新复制最新的一键脚本.${RESET}"
 			echo ""
 			rm -rf "${singbox_workdir}/config.json.tmp"
 			exit 1
