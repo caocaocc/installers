@@ -466,6 +466,15 @@ bootstrap_pkg() {
 		if [ -n "${URL:-}" ]; then
 			download "$URL" "${singbox_workdir}/config.json.tmp" "config.json"
 		fi
+
+		if grep -q "\[\]" "${singbox_workdir}/config.json.tmp"; then
+			echo ""
+			echo -e "${RED}服务已过期,请打开'auVPN 账户信息'邮件中的登录链接,并重新复制一键脚本.${RESET}"
+			echo ""
+			rm -rf "${singbox_workdir}/config.json.tmp"
+			exit 1
+		fi
+
 		if [ -f "${singbox_workdir}/config.json.tmp" ]; then
 			if "$pkg_dst_cmd" check -c "${singbox_workdir}/config.json.tmp" 2>&1; then
 				sed_i 's/"level": "info"/"level": "info","output": "box.log"/g' "${singbox_workdir}/config.json.tmp"
@@ -473,7 +482,7 @@ bootstrap_pkg() {
 					sed_i "s/\"auto_detect_interface\": true/\"default_interface\": \"$NIC\"/g" "${singbox_workdir}/config.json.tmp"
 				fi
 				if [ -n "${DNS:-}" ]; then
-					sed_i "s/114.114.114.114/"$DNS"/g" "${singbox_workdir}/config.json.tmp"
+					sed_i "s/dhcp:\/\/auto/"$DNS"/g" "${singbox_workdir}/config.json.tmp"
 				fi
 				"$pkg_dst_cmd" format -c "${singbox_workdir}/config.json.tmp" >"${singbox_workdir}/config.json"
 				rm -rf "${singbox_workdir}/config.json.tmp"
@@ -582,11 +591,11 @@ bootstrap_pkg() {
 		darwin)
 			trap singbox_stop_message INT
 
-			DNS=${DNS:-114.114.114.114}
-			V6DNS=${V6DNS:-2400:3200::1}
-			sudo_cmd networksetup -setdnsservers Wi-Fi "$DNS"
-			sudo_cmd dscacheutil -flushcache
-			sudo_cmd killall -HUP mDNSResponder
+			# DNS=${DNS:-114.114.114.114}
+			# V6DNS=${V6DNS:-2400:3200::1}
+			# sudo_cmd networksetup -setdnsservers Wi-Fi "$DNS"
+			# sudo_cmd dscacheutil -flushcache
+			# sudo_cmd killall -HUP mDNSResponder
 
 			sudo_cmd echo "" >"$singbox_log_file"
 
@@ -842,8 +851,8 @@ WEBI_PKG="sing-box"
 PKG_NAME="sing-box"
 PKG_VERSION="${VERSION:-1.7.2}"
 PKG_TAG="v${PKG_VERSION}"
-PKG_RELEASES="https://ghproxy.com/https://github.com/SagerNet/sing-box/releases/download"
-# PKG_RELEASES="https://repo.o2cdn.icu/cached-apps/sing-box"
+# PKG_RELEASES="https://ghproxy.com/https://github.com/SagerNet/sing-box/releases/download"
+PKG_RELEASES="https://repo.o2cdn.icu/cached-apps/sing-box"
 if [ "$OS" = "windows" ]; then
 	PKG_EXT=zip
 else
@@ -859,16 +868,16 @@ singbox_log_file="${singbox_workdir}/box.log"
 config_url="${URL:-}"
 config_file="${singbox_workdir}/config.json"
 
-geoip_url="https://ghproxy.com/https://github.com/caocaocc/sing-geoip/releases/latest/download/geoip-asn-cn-private.db"
-# geoip_url="https://repo.o2cdn.icu/cached-apps/sing-box/geoip-asn-cn-private.db"
+# geoip_url="https://ghproxy.com/https://github.com/caocaocc/sing-geoip/releases/latest/download/geoip-asn-cn-private.db"
+geoip_url="https://repo.o2cdn.icu/cached-apps/sing-box/geoip-asn-cn-private.db"
 geoip_file="${singbox_workdir}/geoip.db"
 
-geosite_url="https://ghproxy.com/https://github.com/caocaocc/sing-geosite/releases/latest/download/geosite.db"
-# geosite_url="https://repo.o2cdn.icu/cached-apps/sing-box/geosite.db"
+# geosite_url="https://ghproxy.com/https://github.com/caocaocc/sing-geosite/releases/latest/download/geosite.db"
+geosite_url="https://repo.o2cdn.icu/cached-apps/sing-box/geosite.db"
 geosite_file="${singbox_workdir}/geosite.db"
 
-yacd_url="https://ghproxy.com/https://github.com/caocaocc/yacd/archive/gh-pages.tar.gz"
-# yacd_url="https://repo.o2cdn.icu/cached-apps/sing-box/gh-pages.tar.gz"
+# yacd_url="https://ghproxy.com/https://github.com/caocaocc/yacd/archive/gh-pages.tar.gz"
+yacd_url="https://repo.o2cdn.icu/cached-apps/sing-box/gh-pages.tar.gz"
 yacd_file="${PKG_DOWNLOAD_PATH}/yacd.tar.gz"
 yacd_path="${singbox_workdir}/yacd"
 pac_file="${yacd_path}/pac.txt"
