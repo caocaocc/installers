@@ -1,5 +1,320 @@
 #!/bin/sh
 
+bootstrap_pkg() {
+
+	# get the special formatted version (i.e. "go is go1.14" while node is "node v12.10.8")
+	pkg_canonical_name() {
+		my_versioned_name="'$PKG_NAME $PKG_TAG'"
+		echo "$my_versioned_name"
+	}
+
+	# update symlinks according to $HOME/.local/opt and $HOME/.local/bin install paths.
+	# shellcheck disable=2120
+	# pkg_link may be used in the templated install script
+	pkg_link() {
+		if [ -n "$PKG_SINGLE" ]; then
+			rm -rf "$pkg_dst_cmd"
+			ln -s "$pkg_src_cmd" "$pkg_dst_cmd" 2>/dev/null || cp -f "$pkg_src_cmd" "$pkg_dst_cmd" 2>/dev/null
+		else
+			# 'pkg_dst' will default to $HOME/.local/opt/<pkg>
+			# 'pkg_src' will be the installed version, such as to $HOME/.local/opt/<pkg>-<version>
+			rm -rf "$pkg_dst"
+			ln -s "$pkg_src" "$pkg_dst" 2>/dev/null || cp -f "$pkg_src" "$pkg_dst" 2>/dev/null
+		fi
+	}
+
+	# detect if this program is already installed or if an installed version may cause conflict
+	pkg_check() {
+		# Test for existing version
+		set +e
+		my_path="$PATH"
+		PATH="$(dirname "$pkg_dst_cmd"):$PATH"
+		export PATH
+		my_current_cmd="$(command -v "$pkg_cmd_name")"
+		set -e
+		if [ -n "$my_current_cmd" ]; then
+			my_canonical_name="$(pkg_canonical_name)"
+			if [ "$my_current_cmd" != "$pkg_dst_cmd" ]; then
+				echo >&2 "WARN: possible PATH conflict between $my_canonical_name and currently installed version"
+				echo >&2 "    ${pkg_dst_cmd} (new)"
+				echo >&2 "    ${my_current_cmd} (existing)"
+				#my_current_version=false
+			fi
+			# 'readlink' can't read links in paths on macOS 🤦
+			# but that's okay, 'cmp -s' is good enough for us
+			if cmp -s "${pkg_src_cmd}" "${my_current_cmd}"; then
+				echo "    ${my_canonical_name} already installed"
+				# printf "    %s" "${pkg_dst}"
+				# if [ "${pkg_src_cmd}" != "${my_current_cmd}" ]; then
+				# 	printf " => %s" "${pkg_src}"
+				# fi
+				singbox_config
+				singbox_start
+				exit 0
+			fi
+			if [ -x "$pkg_src_cmd" ]; then
+				# shellcheck disable=2119
+				# this function takes no args
+				pkg_link
+				echo "    switched to $my_canonical_name"
+				# echo "      ${pkg_dst} => ${pkg_src}"
+				singbox_config
+				singbox_start
+				exit 0
+			fi
+		fi
+		export PATH="$my_path"
+	}
+
+	# detect if file is downloaded, and how to download it
+	pkg_download() {
+		my_url="${1:-${PKG_URL}}"
+		my_dl="${2:-${PKG_PATH}/$PKG_FILE}"
+		my_dl_name="${3:-${PKG_NAME}}"
+
+		if [ -e "$my_dl" ]; then
+			echo "    Found $my_dl"
+			return 0
+		fi
+
+		echo "    Downloading ${my_dl_name} from"
+		echo "      $(t_gray "$my_url")"
+
+		user_agent="$(uname -s)/$(uname -r) $(uname -m)/au"
+
+		if command -v curl >/dev/null; then
+			my_show_progress="-#"
+			if ! curl -f -ksSL --user-agent "$user_agent" "$my_url" -o "$my_dl.part"; then
+				echo >&2 "failed to download from $my_url"
+				exit 1
+			fi
+		elif command -v wget >/dev/null; then
+			my_show_progress="--show-progress"
+			if ! wget -q --user-agent="$user_agent" -c "$my_url" -O "$my_dl.part"; then
+				echo >&2 "failed to download from $my_url"
+				exit 1
+			fi
+		else
+			echo >&2 "failed to detect HTTP client (curl, wget)"
+			return 1
+		fi
+
+		mv "$my_dl.part" "$my_dl"
+		echo "    Saved as $my_dl"
+	}
+
+	# detect which archives can be used
+	pkg_extract() {
+		(
+			cd "$TMP_PATH"
+			if [ "tar.gz" = "$PKG_EXT" ]; then
+				echo "    Extracting ${PKG_PATH}/$PKG_FILE"
+				tar xf "${PKG_PATH}/$PKG_FILE"
+			elif [ "tar" = "$PKG_EXT" ]; then
+				echo "    Extracting ${PKG_PATH}/$PKG_FILE"
+				tar xf "${PKG_PATH}/$PKG_FILE"
+			elif [ "zip" = "$PKG_EXT" ]; then
+				echo "    Extracting ${PKG_PATH}/$PKG_FILE"
+				unzip "${PKG_PATH}/$PKG_FILE" >__unzip__.log
+			elif [ "exe" = "$PKG_EXT" ]; then
+				echo "    Moving ${PKG_PATH}/$PKG_FILE"
+				mv "${PKG_PATH}/$PKG_FILE" .
+			elif [ "xz" = "$PKG_EXT" ]; then
+				echo "    Inflating ${PKG_PATH}/$PKG_FILE"
+				unxz -c "${PKG_PATH}/$PKG_FILE" >"$(basename "$PKG_FILE")"
+			else
+				# do nothing
+				echo "Failed to extract ${PKG_PATH}/$PKG_FILE"
+				exit 1
+			fi
+		)
+	}
+
+	# group common pre-install tasks as default
+	pkg_pre_install() {
+		pkg_check
+		pkg_download
+		pkg_extract
+	}
+
+	# move commands from the extracted archive directory to $HOME/.local/opt or $HOME/.local/bin
+	# shellcheck disable=2120
+	# pkg_install may be sourced and used elsewhere
+	pkg_install() {
+		if [ -n "$PKG_SINGLE" ]; then
+			mkdir -p "$(dirname "$pkg_src_cmd")"
+			mv ./"$PKG_NAME"-*/"$pkg_cmd_name"* "$pkg_src_cmd"
+		else
+			rm -rf "$pkg_src"
+			mv ./"$PKG_NAME"-*/"$pkg_cmd_name"* "$pkg_src"
+		fi
+	}
+
+	# run post-install functions - just updating PATH by default
+	pkg_post_install() {
+		return 0
+	}
+
+	pkg_enable_exec() {
+		if [ -n "$(command -v spctl)" ] && [ -n "$(command -v xattr)" ]; then
+			# note: some packages contain files that cannot be affected by xattr
+			xattr -r -d com.apple.quarantine "$pkg_src" || true
+			return 0
+		fi
+		# TODO need to test that the above actually worked
+		# (and proceed to this below if it did not)
+		if [ -n "$(command -v spctl)" ]; then
+			echo "Checking permission to execute '$pkg_cmd_name' on macOS 11+"
+			set +e
+			is_allowed="$(spctl -a "$pkg_src_cmd" 2>&1 | grep valid)"
+			set -e
+			if [ -z "$is_allowed" ]; then
+				echo ""
+				echo "##########################################"
+				echo "#  IMPORTANT: Permission Grant Required  #"
+				echo "##########################################"
+				echo ""
+				echo "Requesting permission to execute '$pkg_cmd_name' on macOS 10.14+"
+				echo ""
+				sleep 3
+				spctl --add "$pkg_src_cmd"
+			fi
+		fi
+	}
+
+	# a friendly message when all is well, showing the final install path in $HOME/.local
+	pkg_done_message() {
+		echo "    Installed $(pkg_canonical_name) as $pkg_dst_cmd"
+	}
+
+	##
+	##
+	## BEGIN custom override functions from <package>/install.sh
+	##
+	##
+
+	PKG_SINGLE=true
+
+	if [ -z "${WELCOME-}" ]; then
+		exit_key="Ctrl + C"
+		if [ "$OS" = "darwin" ]; then
+			exit_key="Control + C"
+		fi
+
+		echo ""
+		echo "$(t_red '>>> 重要提示 <<<')"
+		echo ""
+		echo "  - 请立即退出所有杀毒软件和代理软件，"
+		echo "    这些软件可能阻止您的设备正常联网。"
+		echo ""
+		echo "  - 退出 sing-box 的正确方式是在本窗口按 $exit_key 快捷键，"
+		echo "    强制关闭窗口可能导致设备无法联网。"
+		echo ""
+		echo "  - 如需重新运行一键脚本，"
+		echo "    可以在本窗口按方向键上 ↑ 浏览历史命令，"
+		echo "    无需每次都从网站复制一键脚本。"
+		echo ""
+		# echo ""
+		# printf "Thanks for using webi to install '\e[32m%s\e[0m' on '\e[31m%s/%s\e[0m'.\n" "${PKG_NAME-}" "$(uname -s)" "$(uname -m)"
+		# echo "Have a problem? Experience a bug? Please let us know:"
+		# echo "        https://github.com/webinstall/webi-installers/issues"
+		# echo ""
+		# printf "\e[31mLovin'\e[0m it? Say thanks with a \e[34mStar on GitHub\e[0m:\n"
+		# printf "        \e[32mhttps://github.com/webinstall/webi-installers\e[0m\n"
+		# echo ""
+	fi
+
+	init_installer() {
+
+		# do nothing - to satisfy parser prior to templating
+		printf ""
+		echo "$(t_cyan 'Installing sing-box ...')"
+
+		# {{ installer }}
+
+	}
+
+	init_installer
+
+	##
+	##
+	## END custom override functions
+	##
+	##
+
+	# run everything with defaults or overrides as needed
+	if command -v pkg_install >/dev/null ||
+		command -v pkg_link >/dev/null ||
+		command -v pkg_post_install >/dev/null ||
+		command -v pkg_done_message >/dev/null ||
+		command -v pkg_format_cmd_version >/dev/null ||
+		[ -n "${PKG_SINGLE-}" ] ||
+		[ -n "${pkg_cmd_name-}" ] ||
+		[ -n "${pkg_dst_cmd-}" ] ||
+		[ -n "${pkg_dst_dir-}" ] ||
+		[ -n "${pkg_dst-}" ] ||
+		[ -n "${pkg_src_cmd-}" ] ||
+		[ -n "${pkg_src_dir-}" ] ||
+		[ -n "${pkg_src-}" ]; then
+
+		pkg_cmd_name="${pkg_cmd_name:-$PKG_NAME}"
+		if [ "$OS" = "windows" ]; then
+			pkg_cmd_name="${pkg_cmd_name}.exe"
+		fi
+
+		if [ -n "$PKG_SINGLE" ]; then
+			pkg_dst_cmd="${pkg_dst_cmd:-$HOME/.local/bin/$pkg_cmd_name}"
+			pkg_dst="$pkg_dst_cmd" # "$(dirname "$(dirname $pkg_dst_cmd)")"
+
+			pkg_src_cmd="${pkg_src_cmd:-$HOME/.local/opt/$PKG_NAME-$PKG_TAG/bin/$pkg_cmd_name}"
+			pkg_src="$pkg_src_cmd" # "$(dirname "$(dirname $pkg_src_cmd)")"
+		else
+			pkg_dst="${pkg_dst:-$HOME/.local/opt/$pkg_cmd_name}"
+			pkg_dst_cmd="${pkg_dst_cmd:-$pkg_dst/bin/$pkg_cmd_name}"
+
+			pkg_src="${pkg_src:-$HOME/.local/opt/$PKG_NAME-$PKG_TAG}"
+			pkg_src_cmd="${pkg_src_cmd:-$pkg_src/bin/$pkg_cmd_name}"
+		fi
+		# this script is templated and these are used elsewhere
+		# shellcheck disable=SC2034
+		pkg_src_bin="$(dirname "$pkg_src_cmd")"
+		# shellcheck disable=SC2034
+		pkg_dst_bin="$(dirname "$pkg_dst_cmd")"
+
+		pkg_pre_install
+
+		(
+			cd "$TMP_PATH"
+			echo "    Installing to $pkg_src_cmd"
+			pkg_install
+			chmod a+x "$pkg_src"
+			chmod a+x "$pkg_src_cmd"
+		)
+
+		pkg_link
+
+		pkg_enable_exec
+		(
+			cd "$TMP_PATH"
+			pkg_post_install
+		)
+
+		(
+			cd "$TMP_PATH"
+			pkg_done_message
+		)
+	fi
+
+	singbox_config
+	singbox_start
+
+	# cleanup the temp directory
+	rm -rf "$TMP_PATH"
+
+	# See? No magic. Just downloading and moving files.
+
+}
+
 init_arch() {
 	ARCH=$(uname -m)
 	case $ARCH in
@@ -44,7 +359,6 @@ init_os() {
 	esac
 }
 
-# 检查当前用户是否是 root 用户
 is_root() {
 	if [[ -n "${EUID}" ]] && [[ "${EUID}" -eq 0 ]]; then
 		return 0
@@ -56,32 +370,28 @@ is_root() {
 }
 
 ask_password() {
-	# 如果当前用户不是 root 用户，则提示用户输入密码并写入文件
 	if ! is_root; then
 		if [ ! -s "$HOME/.password" ]; then
-			# 进入循环，提示用户输入密码，并将输入的密码写入变量
 			while [ -z "${password:-}" ]; do
 				echo ""
 				unset password
 				password=
 				echo -n "请输入 '$(id -u -n)' 用户的开机登录密码: " 1>&2
 				while IFS= read -r -n1 -s char; do
-					# 将用户输入的按键转换为十六进制字符代码
-					# 注意，如果是回车或换行符，则返回一个空字符串
 					code=${char:+$(printf '%02x' "'$char'")}
 					case "$code" in
-					'' | 0a | 0d) break ;; # 回车、换行符或者return键，退出循环
-					08 | 7f)               # 退格或删除键
+					'' | 0a | 0d) break ;;
+					08 | 7f)
 						if [ -n "$password" ]; then
 							password="$(echo "$password" | sed 's/.$//')"
 							echo -n $'\b \b' 1>&2
 						fi
 						;;
-					1b) ;;          # 忽略ESC键
-					5b)             # 忽略方向键
-						read -r -n2 -s # 消耗下两个字符（即方向键代码）
+					1b) ;;
+					5b)
+						read -r -n2 -s
 						;;
-					[01]?) ;; # 忽略其他所有控制字符
+					[01]?) ;;
 					*)
 						password="$password$char"
 						echo -n '*' 1>&2
@@ -90,38 +400,21 @@ ask_password() {
 				done
 				echo
 			done
-
-			# 将密码写入文件
 			echo "$password" >"$HOME/.password"
 		fi
-
-		# 从文件中读取密码并使用 sudo 命令进行验证
 		password=$(cat "$HOME/.password")
 		echo "$password" | sudo -S true >/dev/null 2>&1
 		if [[ $? -eq 0 ]]; then
 			return 0
 		else
-			printf "\n${RED}您输入的密码不正确，请重新启动设备后再次尝试。${RESET}\n\n"
+			printf "\n您输入的密码不正确，请重新启动设备后再次尝试。\n\n"
 			rm -rf "$HOME/.password"
 			exit 1
 		fi
-
 	fi
 }
 
-process_stop() {
-	PROCESS_NAME=$1
-	while true; do
-		if tasklist | grep -i "${PROCESS_NAME}" >/dev/null 2>&1; then
-			taskkill //IM "${PROCESS_NAME}" //F >/dev/null 2>&1
-		else
-			break
-		fi
-		sleep 1
-	done
-}
-
-sudo_cmd() {
+cmd_sudo() {
 	case "$OS" in
 	darwin)
 		if ! is_root; then
@@ -143,7 +436,7 @@ sudo_cmd() {
 	esac
 }
 
-sed_i() {
+cmd_sed() {
 	if [ "$OS" = "darwin" ]; then
 		sed -i '' "$@"
 	else
@@ -151,680 +444,195 @@ sed_i() {
 	fi
 }
 
-bootstrap_pkg() {
-
-	# get the special formatted version (i.e. "go is go1.14" while node is "node v12.10.8")
-	my_versioned_name=""
-	_webi_canonical_name() {
-		if [ -n "$my_versioned_name" ]; then
-			echo "$my_versioned_name"
-			return 0
-		fi
-
-		if [ -n "$(command -v pkg_format_cmd_version)" ]; then
-			my_versioned_name="'$(pkg_format_cmd_version "$PKG_VERSION")'"
+cmd_process_stop() {
+	process_name=$1
+	while true; do
+		if tasklist | grep -i "${process_name}" >/dev/null 2>&1; then
+			taskkill //IM "${process_name}" //F >/dev/null 2>&1
 		else
-			my_versioned_name="'$pkg_cmd_name v$PKG_VERSION'"
+			break
 		fi
-
-		echo "$my_versioned_name"
-	}
-
-	# update symlinks according to $HOME/.local/opt and $HOME/.local/bin install paths.
-	# shellcheck disable=2120
-	# webi_link may be used in the templated install script
-	webi_link() {
-		if [ -n "$(command -v pkg_link)" ]; then
-			pkg_link
-			return 0
-		fi
-
-		if [ -n "$WEBI_SINGLE" ] || [ "single" = "${1-}" ]; then
-			rm -rf "$pkg_dst_cmd"
-			ln -s "$pkg_src_cmd" "$pkg_dst_cmd" 2>/dev/null || cp -f "$pkg_src_cmd" "$pkg_dst_cmd" 2>/dev/null
-		else
-			# 'pkg_dst' will default to $HOME/.local/opt/<pkg>
-			# 'pkg_src' will be the installed version, such as to $HOME/.local/opt/<pkg>-<version>
-			rm -rf "$pkg_dst"
-			ln -s "$pkg_src" "$pkg_dst" 2>/dev/null || cp -f "$pkg_src" "$pkg_dst" 2>/dev/null
-		fi
-	}
-
-	# detect if this program is already installed or if an installed version may cause conflict
-	webi_check() {
-		# Test for existing version
-		set +e
-		my_path="$PATH"
-		PATH="$(dirname "$pkg_dst_cmd"):$PATH"
-		export PATH
-		my_current_cmd="$(command -v "$pkg_cmd_name")"
-		set -e
-		if [ -n "$my_current_cmd" ]; then
-			my_canonical_name="$(_webi_canonical_name)"
-			if [ "$my_current_cmd" != "$pkg_dst_cmd" ]; then
-				echo >&2 "WARN: possible PATH conflict between $my_canonical_name and currently installed version"
-				echo >&2 "    ${pkg_dst_cmd} (new)"
-				echo >&2 "    ${my_current_cmd} (existing)"
-				#my_current_version=false
-			fi
-			# 'readlink' can't read links in paths on macOS 🤦
-			# but that's okay, 'cmp -s' is good enough for us
-			if cmp -s "${pkg_src_cmd}" "${my_current_cmd}"; then
-				echo ""
-				echo "${my_canonical_name} already installed:"
-				printf "    %s" "${pkg_dst}"
-				if [ "${pkg_src_cmd}" != "${my_current_cmd}" ]; then
-					printf " => %s" "${pkg_src}"
-				fi
-				echo ""
-				echo ""
-				init_singbox
-				exit 0
-			fi
-			if [ -x "$pkg_src_cmd" ]; then
-				# shellcheck disable=2119
-				# this function takes no args
-				webi_link
-				echo ""
-				echo "switched to $my_canonical_name:"
-				echo "    ${pkg_dst} => ${pkg_src}"
-				echo ""
-				init_singbox
-				exit 0
-			fi
-		fi
-		export PATH="$my_path"
-	}
-
-	is_interactive_shell() {
-		# $- shows shell flags (error,unset,interactive,etc)
-		case $- in
-		*i*)
-			# true
-			return 0
-			;;
-		*)
-			# false
-			return 1
-			;;
-		esac
-	}
-
-	# detect if file is downloaded, and how to download it
-	webi_download() {
-		# determine the url to download
-		if [ -n "${1-}" ]; then
-			my_url="$1"
-		else
-			my_url="$PKG_DOWNLOAD_URL"
-		fi
-
-		# determine the location to download to
-		if [ -n "${2-}" ]; then
-			my_dl="$2"
-		else
-			my_dl="${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME"
-		fi
-
-		if [ -e "$my_dl" ]; then
-			echo "Found $my_dl"
-			return 0
-		fi
-
-		echo ""
-		echo "Downloading $PKG_NAME from $my_url"
-
-		# It's only 2020, we can't expect to have reliable CLI tools
-		# to tell us the size of a file as part of a base system...
-		if [ -n "$WEBI_CURL" ]; then
-			# Neither GNU nor BSD curl have sane resume download options, hence we don't bother
-			# TODO curl -fsSL --remote-name --remote-header-name --write-out "$my_url"
-			my_show_progress="-#"
-			if is_interactive_shell; then
-				my_show_progress=""
-			fi
-			# shellcheck disable=SC2086
-			# we want the flags to be split
-			curl -kfSL $my_show_progress -H "User-Agent: curl $UA" "$my_url" -o "$my_dl.part"
-		else
-			# wget has resumable downloads
-			# TODO wget -c --content-disposition "$my_url"
-			set +e
-			my_show_progress=""
-			if is_interactive_shell; then
-				my_show_progress="--show-progress"
-			fi
-			if ! wget -q $my_show_progress --user-agent="wget $UA" -c "$my_url" -O "$my_dl.part"; then
-				echo >&2 "failed to download from $PKG_DOWNLOAD_URL"
-				exit 1
-			fi
-			set -e
-		fi
-		mv "$my_dl.part" "$my_dl"
-		echo "Saved as $my_dl"
-	}
-
-	# detect which archives can be used
-	webi_extract() {
-		(
-			cd "$TMP_DIR"
-			if [ "tar.gz" = "$PKG_EXT" ]; then
-				echo "Extracting ${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME"
-				tar xf "${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME"
-			elif [ "zip" = "$PKG_EXT" ]; then
-				echo "Extracting ${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME"
-				unzip "${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME" >__unzip__.log
-			elif [ "exe" = "$PKG_EXT" ]; then
-				echo "Moving ${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME"
-				mv "${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME" .
-			elif [ "xz" = "$PKG_EXT" ]; then
-				echo "Inflating ${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME"
-				unxz -c "${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME" >"$(basename "$PKG_FILE_NAME")"
-			else
-				# do nothing
-				echo "Failed to extract ${PKG_DOWNLOAD_PATH}/$PKG_FILE_NAME"
-				exit 1
-			fi
-		)
-	}
-
-	webi_path_add() {
-		my_path="$PATH"
-		export PATH="$HOME/.local/bin:$PATH"
-		export PATH="$my_path"
-	}
-
-	# group common pre-install tasks as default
-	webi_pre_install() {
-		webi_check
-		webi_download
-		webi_extract
-	}
-
-	# move commands from the extracted archive directory to $HOME/.local/opt or $HOME/.local/bin
-	# shellcheck disable=2120
-	# webi_install may be sourced and used elsewhere
-	webi_install() {
-		if [ -n "$WEBI_SINGLE" ] || [ "single" = "${1-}" ]; then
-			mkdir -p "$(dirname "$pkg_src_cmd")"
-			mv ./"$PKG_NAME"-*/"$pkg_cmd_name"* "$pkg_src_cmd"
-		else
-			rm -rf "$pkg_src"
-			mv ./"$PKG_NAME"-*/"$pkg_cmd_name"* "$pkg_src"
-		fi
-	}
-
-	# run post-install functions - just updating PATH by default
-	webi_post_install() {
-		webi_path_add "$(dirname "$pkg_dst_cmd")"
-	}
-
-	_webi_enable_exec() {
-		if [ -n "$(command -v spctl)" ] && [ -n "$(command -v xattr)" ]; then
-			# note: some packages contain files that cannot be affected by xattr
-			xattr -r -d com.apple.quarantine "$pkg_src" || true
-			return 0
-		fi
-		# TODO need to test that the above actually worked
-		# (and proceed to this below if it did not)
-		if [ -n "$(command -v spctl)" ]; then
-			echo "Checking permission to execute '$pkg_cmd_name' on macOS 11+"
-			set +e
-			is_allowed="$(spctl -a "$pkg_src_cmd" 2>&1 | grep valid)"
-			set -e
-			if [ -z "$is_allowed" ]; then
-				echo ""
-				echo "##########################################"
-				echo "#  IMPORTANT: Permission Grant Required  #"
-				echo "##########################################"
-				echo ""
-				echo "Requesting permission to execute '$pkg_cmd_name' on macOS 10.14+"
-				echo ""
-				sleep 3
-				spctl --add "$pkg_src_cmd"
-			fi
-		fi
-	}
-
-	# a friendly message when all is well, showing the final install path in $HOME/.local
-	_webi_done_message() {
-		echo "Installed $(_webi_canonical_name) as $pkg_dst_cmd"
-	}
-
-	##
-	##
-	## BEGIN custom override functions from <package>/install.sh
-	##
-	##
-
-	WEBI_SINGLE=true
-
-	download() {
-		if [ -n "${1-}" ]; then
-			my_url="$1"
-		fi
-
-		if [ -n "${2-}" ]; then
-			my_dl="$2"
-		fi
-
-		if [ -n "${3-}" ]; then
-			my_name="$3"
-		fi
-
-		echo "Downloading $my_name from $my_url"
-
-		if [ -n "$WEBI_CURL" ]; then
-			my_show_progress="-#"
-			if is_interactive_shell; then
-				my_show_progress=""
-			fi
-			curl -kfSL $my_show_progress -H "User-Agent: curl $UA" "$my_url" -o "$my_dl.part"
-		else
-			set +e
-			my_show_progress=""
-			if is_interactive_shell; then
-				my_show_progress="--show-progress"
-			fi
-			if ! wget -q $my_show_progress --user-agent="wget $UA" -c "$my_url" -O "$my_dl.part"; then
-				echo >&2 "failed to download"
-				exit 1
-			fi
-			set -e
-		fi
-		mv "$my_dl.part" "$my_dl"
-	}
-
-	singbox_download_deps() {
-		if [ ! -f "${PKG_DOWNLOAD_PATH}/date.txt" ]; then
-			echo "0" >"${PKG_DOWNLOAD_PATH}/date.txt"
-		fi
-
-		current_date=$(date +%Y%m%d)
-		download_date=$(cat "${PKG_DOWNLOAD_PATH}/date.txt")
-
-		if [ "$current_date" = "$download_date" ] && [ -e "$geoip_file" ] && [ -e "$geosite_file" ] && [ -d "$yacd_path" ]; then
-			return 0
-		else
-			set +e
-			download "$geoip_url" "$geoip_file" "geoip" && echo "Saved as $geoip_file" && echo ""
-			download "$geosite_url" "$geosite_file" "geosite" && echo "Saved as $geosite_file" && echo ""
-			download "$yacd_url" "$yacd_file" "yacd" && cd "$singbox_workdir" && tar -xzf "$yacd_file" && rm -rf yacd && mv yacd-gh-pages yacd && echo "Saved as $yacd_path" && echo ""
-			set -e
-			if [ -e "$geoip_file" ] && [ -e "$geosite_file" ] && [ -d "$yacd_path" ]; then
-				echo "$current_date" >"${PKG_DOWNLOAD_PATH}/date.txt"
-			else
-				echo -e "${RED}下载失败,请重试.如果重试 3 次均失败,请重启设备.${RESET}"
-				echo ""
-				exit 1
-			fi
-		fi
-	}
-
-	singbox_download_config() {
-		set +e
-		if [ -n "${URL:-}" ]; then
-			download "$URL" "${singbox_workdir}/config.json.tmp" "config.json"
-		fi
-
-		if grep -q "\[\]" "${singbox_workdir}/config.json.tmp"; then
-			echo ""
-			echo -e "${RED}此服务已过期,请打开'auVPN 账户信息'邮件中的登录链接,并重新复制最新的一键脚本.${RESET}"
-			echo ""
-			rm -rf "${singbox_workdir}/config.json.tmp"
-			exit 1
-		fi
-
-		if [ -f "${singbox_workdir}/config.json.tmp" ]; then
-			if "$pkg_dst_cmd" check -c "${singbox_workdir}/config.json.tmp" 2>&1; then
-				sed_i 's/"level": "info"/"level": "info","output": "box.log"/g' "${singbox_workdir}/config.json.tmp"
-				if [ -n "${NIC:-}" ]; then
-					sed_i "s/\"auto_detect_interface\": true/\"default_interface\": \"$NIC\"/g" "${singbox_workdir}/config.json.tmp"
-				fi
-				if [ -n "${DNS:-}" ]; then
-					sed_i "s/dhcp:\/\/auto/"$DNS"/g" "${singbox_workdir}/config.json.tmp"
-				fi
-				"$pkg_dst_cmd" format -c "${singbox_workdir}/config.json.tmp" >"${singbox_workdir}/config.json"
-				rm -rf "${singbox_workdir}/config.json.tmp"
-				echo -e "Saved as ${singbox_workdir}/config.json"
-			else
-				rm -rf "${singbox_workdir}/config.json.tmp"
-			fi
-		fi
-		set -e
-	}
-
-	singbox_start_message() {
-		if [ "$OS" = "darwin" ]; then
-			EXIT_KEY="Control + C"
-		else
-			EXIT_KEY="CTRL + C"
-		fi
-		clear
-		echo ""
-		echo -e "${GREEN}启动成功,sing-box 正在运行中...${RESET}"
-		echo ""
-		echo -e "请勿强制关闭本窗口,退出 sing-box 请按 ${BOLD}${ORANGE}$EXIT_KEY${RESET} "
-		echo ""
-	}
-
-	singbox_stop_message() {
-		clear
-		echo ""
-		echo -e "${RED}退出成功,sing-box 已停止运行.${RESET}"
-		echo ""
-		echo -e "启动 sing-box 请按 ${BOLD}${ORANGE}上方向键${RESET} 再按 ${BOLD}${ORANGE}回车键${RESET}"
-		echo ""
-		exit 0
-	}
-
-	open_websites() {
-		open_url=$(command -v start || command -v open || command -v xdg-open)
-		if [ -n "${DEV:-}" ]; then
-			$open_url "$YACD"
-		else
-			$open_url "https://ipv4.geojs.io" && $open_url "https://youtube.com" && $open_url "$YACD"
-		fi
-	}
-
-	singbox_start() {
-		if [ ! -f "$config_file" ]; then
-			echo -e "${RED}配置文件不存在，请重新启动设备后再次尝试。${RESET}" >&2
-			exit 1
-		fi
-
-		if "$pkg_dst_cmd" check -c "$config_file" 2>&1; then
-			:
-		else
-			echo -e "${RED}配置文件错误，请登陆您的账户并重新复制一键脚本。${RESET}" >&2
-			exit 1
-		fi
-
-		EXTERNAL_CONTROLLER_PORT=$(awk -F'"' '/external_controller/ {gsub(/[^0-9]/,"",$4); printf("%d\n", $4)}' "$config_file")
-		YACD="http://127.0.0.1:$EXTERNAL_CONTROLLER_PORT/ui/#/proxies"
-
-		MIXED_PORT=$(awk '/"type": "mixed"/ {mixed=NR} mixed && /"listen_port"/ {gsub(/[^0-9]/,"",$2); print $2; exit}' "$config_file")
-		PAC_PORT=$(awk -F':' 'NR==1 {gsub(/;|"|\047/,"",$2);print $2}' "$pac_file")
-
-		if [ "$PAC_PORT" != "$MIXED_PORT" ]; then
-			awk -v mixed_port="$MIXED_PORT" '{gsub(/127\.0\.0\.1:[0-9]+/,"127.0.0.1:" mixed_port)}1' "$pac_file" >temp && mv temp "$pac_file"
-		fi
-
-		PAC="http://127.0.0.1:$EXTERNAL_CONTROLLER_PORT/ui/pac.txt"
-
-		echo ""
-		echo -e "开始启动 sing-box ,请稍等..."
-		sleep 3
-
-		case "$OS" in
-		linux)
-			trap singbox_stop_message INT
-
-			sudo_cmd echo "" >"$singbox_log_file"
-
-			(
-				for i in {1..8}; do
-					if grep -q "sing-box started" "$singbox_log_file"; then
-						singbox_start_message
-						sleep 3
-						open_websites
-						break
-					fi
-					sleep 1
-				done
-			) &
-
-			for i in {1..2}; do
-				sudo_cmd "$pkg_dst_cmd" run -D "${singbox_workdir}" && break || sleep 1s
-			done
-
-			clear
-			rm -rf $HOME/.local/*/sing-box*
-			echo ""
-			echo -e "${RED}启动失败${RESET}"
-			echo ""
-			echo -e "${BOLD}${ORANGE}请尝试重新启动设备${RESET}"
-			echo ""
-			exit 1
-
-			;;
-		darwin)
-			trap singbox_stop_message INT
-
-			# DNS=${DNS:-114.114.114.114}
-			# V6DNS=${V6DNS:-2400:3200::1}
-			# sudo_cmd networksetup -setdnsservers Wi-Fi "$DNS"
-			# sudo_cmd dscacheutil -flushcache
-			# sudo_cmd killall -HUP mDNSResponder
-
-			sudo_cmd echo "" >"$singbox_log_file"
-
-			(
-				for i in {1..8}; do
-					if grep -q "sing-box started" "$singbox_log_file"; then
-						singbox_start_message
-						sleep 3
-						open_websites
-						break
-					fi
-					sleep 1
-				done
-			) &
-
-			for i in {1..2}; do
-				sudo_cmd "$pkg_dst_cmd" run -D "${singbox_workdir}" && break || sleep 1s
-			done
-
-			clear
-			rm -rf $HOME/.local/*/sing-box*
-			echo ""
-			echo -e "${RED}启动失败${RESET}"
-			echo ""
-			echo -e "${BOLD}${ORANGE}请尝试重新启动设备${RESET}"
-			echo ""
-			exit 1
-
-			;;
-		windows)
-			trap singbox_stop_message INT
-
-			echo "" >"$singbox_log_file"
-
-			(
-				for i in {1..60}; do
-					if grep -q "sing-box started" "$singbox_log_file"; then
-						if grep -q "inbound/tun.*started" "$singbox_log_file"; then
-							singbox_start_message
-							sleep 3
-							open_websites
-						else
-							clear
-							echo ""
-							echo -e "${GREEN}启动成功,sing-box 正在运行中...${RESET}"
-							echo ""
-							echo -e "请勿强制关闭本窗口,退出 sing-box 请按 ${BOLD}${ORANGE}CTRL + C${RESET} "
-							echo ""
-							echo ""
-							echo ""
-							echo -e "${BOLD}${ORANGE}当前环境仅代理 Chrome 浏览器.${RESET}"
-							echo ""
-							echo -e "如果要代理其它软件,请将对应软件的代理设置为 SOCKS5://127.0.0.1:2080"
-							echo ""
-							echo -e "如果要代理本机全部流量,必须以管理员身份运行 Git Bash 并退出所有杀毒软件.如果仍然无效,必须重新安装操作系统."
-							echo ""
-						fi
-						break
-					fi
-					sleep 1
-				done
-			) &
-
-			for i in {1..2}; do
-				"$pkg_dst_cmd" run -D "${singbox_workdir}" && break || sleep 1s
-			done
-
-			(
-				if reg query "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe" >/dev/null 2>&1; then
-					process_stop "chrome.exe"
-					sleep 3
-					if [ -n "${DEV:-}" ]; then
-						start chrome.exe "$YACD" --dns-prefetch-disable --proxy-pac-url="$PAC"
-					else
-						start chrome.exe "$YACD" "https://youtube.com" "https://ipv4.geojs.io" --dns-prefetch-disable --proxy-pac-url="$PAC"
-					fi
-				else
-					start "https://www.google.cn/intl/zh-CN/chrome/?standalone=1"
-				fi
-			) &
-
-			auto_route_line_numbers=$(awk '/auto_route/ { print NR }' "$config_file")
-			tun_line_numbers_start=$(awk -v end_line="$auto_route_line_numbers" 'NR <= end_line && /{/ { line = NR } END { print line }' "$config_file")
-			tun_line_numbers_stop=$(awk -v start_line="$auto_route_line_numbers" 'NR >= start_line && /}/ { print NR; exit }' "$config_file")
-			awk -v start="$tun_line_numbers_start" -v end="$tun_line_numbers_stop" 'NR < start || NR > end' "$config_file" >"$config_file.tmp" && mv "$config_file.tmp" "$config_file"
-			"$pkg_dst_cmd" run -D "${singbox_workdir}"
-			;;
-		esac
-
-	}
-
-	init_singbox() {
-		singbox_download_deps
-		singbox_download_config
-		singbox_start
-	}
-
-	##
-	##
-	## END custom override functions
-	##
-	##
-
-	# run everything with defaults or overrides as needed
-	if command -v pkg_install >/dev/null ||
-		command -v pkg_link >/dev/null ||
-		command -v pkg_post_install >/dev/null ||
-		command -v pkg_done_message >/dev/null ||
-		command -v pkg_format_cmd_version >/dev/null ||
-		[ -n "${WEBI_SINGLE-}" ] ||
-		[ -n "${pkg_cmd_name-}" ] ||
-		[ -n "${pkg_dst_cmd-}" ] ||
-		[ -n "${pkg_dst_dir-}" ] ||
-		[ -n "${pkg_dst-}" ] ||
-		[ -n "${pkg_src_cmd-}" ] ||
-		[ -n "${pkg_src_dir-}" ] ||
-		[ -n "${pkg_src-}" ]; then
-
-		if [ "$OS" = "windows" ]; then
-			pkg_cmd_name="${pkg_cmd_name:-$PKG_NAME}.exe"
-		else
-			pkg_cmd_name="${pkg_cmd_name:-$PKG_NAME}"
-		fi
-
-		if [ -n "$WEBI_SINGLE" ]; then
-			pkg_dst_cmd="${pkg_dst_cmd:-$HOME/.local/bin/$pkg_cmd_name}"
-			pkg_dst="$pkg_dst_cmd" # "$(dirname "$(dirname $pkg_dst_cmd)")"
-
-			pkg_src_cmd="${pkg_src_cmd:-$HOME/.local/opt/$pkg_cmd_name-v$PKG_VERSION/bin/$pkg_cmd_name}"
-			pkg_src="$pkg_src_cmd" # "$(dirname "$(dirname $pkg_src_cmd)")"
-		else
-			pkg_dst="${pkg_dst:-$HOME/.local/opt/$pkg_cmd_name}"
-			pkg_dst_cmd="${pkg_dst_cmd:-$pkg_dst/bin/$pkg_cmd_name}"
-
-			pkg_src="${pkg_src:-$HOME/.local/opt/$pkg_cmd_name-v$PKG_VERSION}"
-			pkg_src_cmd="${pkg_src_cmd:-$pkg_src/bin/$pkg_cmd_name}"
-		fi
-		# this script is templated and these are used elsewhere
-		# shellcheck disable=SC2034
-		pkg_src_bin="$(dirname "$pkg_src_cmd")"
-		# shellcheck disable=SC2034
-		pkg_dst_bin="$(dirname "$pkg_dst_cmd")"
-
-		if [ -n "$(command -v pkg_pre_install)" ]; then pkg_pre_install; else webi_pre_install; fi
-
-		(
-			cd "$TMP_DIR"
-			echo "Installing to $pkg_src_cmd"
-			if [ -n "$(command -v pkg_install)" ]; then pkg_install; else webi_install; fi
-			chmod a+x "$pkg_src"
-			chmod a+x "$pkg_src_cmd"
-			if [ "$ARCH" = "amd64" ]; then
-				if [ -z "$("$pkg_src_cmd" version)" ]; then
-					rm -rf "$pkg_src"
-					rm -rf "$pkg_src_cmd"
-					PKG_FILE_NAME="${PKG_NAME}-${PKG_VERSION}-${OS}-${ARCH}v3.${PKG_EXT}"
-					PKG_DOWNLOAD_URL="${PKG_RELEASES}/${PKG_TAG}/${PKG_FILE_NAME}"
-					pkg_pre_install
-					pkg_install
-					chmod a+x "$pkg_src"
-					chmod a+x "$pkg_src_cmd"
-				fi
-			fi
-		)
-
-		webi_link
-
-		_webi_enable_exec
-		(
-			cd "$TMP_DIR"
-			if [ -n "$(command -v pkg_post_install)" ]; then pkg_post_install; else webi_post_install; fi
-		)
-
-		(
-			cd "$TMP_DIR"
-			if [ -n "$(command -v pkg_done_message)" ]; then pkg_done_message; else _webi_done_message; fi
-		)
-
-		echo ""
-	fi
-
-	webi_path_add "$HOME/.local/bin"
-
-	init_singbox
-
-	# cleanup the temp directory
-	rm -rf "$TMP_DIR"
-
-	# See? No magic. Just downloading and moving files.
-
+		sleep 1
+	done
 }
 
-# ANSI 转义代码
-RED='\033[0;31m'
-ORANGE='\033[38;5;208m'
-YELLOW='\033[0;33m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-INDIGO='\033[0;35m'
-VIOLET='\033[0;36m'
-PINK='\033[38;5;219m'
-BOLD='\033[1m'
-UNDERLINE='\033[4m'
-RESET='\033[0m'
+singbox_config() { (
+	# Update config.json
+	if [ -n "${url:-}" ]; then
+		echo "$(t_cyan 'Update proxies ...')"
 
-args=$(awk 'BEGIN { for(i = 1; i < ARGC; i++) print ARGV[i] }' "$@")
+		url=$(echo "$url" | sed 's|https://[^/]\+/v1/|https://sync.xn--8stx8olrwkucjq3b.com/v1/|')
 
-for arg in $args; do
-	case $arg in
-	https://*)
-		URL=$arg
-		;;
-	version=*)
-		VERSION=${arg#*=}
-		;;
-	dns=*)
-		DNS=${arg#*=}
-		;;
-	v6dns=*)
-		V6DNS=${arg#*=}
-		;;
-	nic=*)
-		NIC=${arg#*=}
-		;;
-	dev)
-		DEV=true
-		;;
-	esac
-done
+		cd "$TMP_PATH"
+		(pkg_download "$url" "config.json" "proxies" >/dev/null 2>&1) || true
+
+		if "$pkg_dst_cmd" format -w -c "config.json" >/dev/null 2>&1; then
+
+			if grep -q "dns-out" "config.json"; then
+				cmd_sed 's/dns-out/dns/g' "config.json"
+			fi
+
+			if grep -q "null" "config.json"; then
+				echo "\n错误：服务已过期,请重新复制一键脚本.\n"
+				exit 1
+			fi
+
+			if grep -q "outbounds" "config.json"; then
+				awk 'BEGIN{print"{"} /"outbounds": \[/{p=1} /"route":/{p=0} p&&!/"route":/{if(prev)print prev;prev=$0} END{sub(/,$/, "", prev);print prev;print "}"}' "config.json" >"$singbox_outbound"
+				echo "    Updated proxies"
+			fi
+		else
+			if "$pkg_dst_cmd" format -w -c "$singbox_outbound" >/dev/null 2>&1; then
+				echo "    Error updating proxies"
+			else
+				echo "    $(t_red '代理服务器更新失败,请打开登录链接,并重新复制一键脚本.')"
+				exit 1
+			fi
+		fi
+	fi
+
+	if [ ! -e "$singbox_rule" ]; then
+		echo '{"log":{"level":"info","output":"log.txt"},"dns":{"servers":[{"tag":"google","address":"8.8.8.8"},{"tag":"local","address":"114.114.114.114","detour":"direct"},{"tag":"remote","address":"fakeip"}],"rules":[{"outbound":"any","server":"local"},{"domain_suffix":["yacd.haishan.me","yacd.metacubex.one","splashtop.com"],"server":"local"},{"rule_set":["geosite-private","geosite-cn"],"server":"local"},{"query_type":["A","AAAA"],"server":"remote"}],"fakeip":{"enabled":true,"inet4_range":"198.18.0.0/15","inet6_range":"fc00::/18"},"independent_cache":true},"route":{"rules":[{"type":"logical","mode":"or","rules":[{"protocol":"dns"},{"port":53}],"outbound":"dns"},{"type":"logical","mode":"or","rules":[{"protocol":"stun"},{"port":853},{"network":"udp","port":443}],"outbound":"block"},{"domain_suffix":["yacd.haishan.me","yacd.metacubex.one","splashtop.com"],"outbound":"direct"},{"rule_set":["geosite-private","geosite-cn","geoip-private","geoip-cn"],"outbound":"china"}],"rule_set":[{"type":"remote","tag":"geoip-private","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geoip/rule-set/geoip-private.srs","download_detour":"direct"},{"type":"remote","tag":"geoip-cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geoip/rule-set/geoip-cn.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-private","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-private.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-cn.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-geolocation-!cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-geolocation-!cn.srs","download_detour":"direct"}],"auto_detect_interface":true},"experimental":{"cache_file":{"enabled":true,"store_fakeip":true},"clash_api":{"external_controller":"0.0.0.0:9090","external_ui":"yacd","external_ui_download_url":"https://repo.o2cdn.icu/cached-apps/sing-box/gh-pages.zip","external_ui_download_detour":"direct"}}}' >"$singbox_rule"
+	fi
+
+	if [ -n "${redir_host:-}" ]; then
+		echo '{"log":{"level":"info","output":"log.txt"},"dns":{"servers":[{"tag":"google","address":"8.8.8.8"},{"tag":"local","address":"114.114.114.114","detour":"direct"}],"rules":[{"outbound":"any","server":"local"},{"domain_suffix":["yacd.haishan.me","yacd.metacubex.one","splashtop.com"],"server":"local"},{"rule_set":["geosite-private","geosite-cn"],"server":"local"}]},"route":{"rules":[{"type":"logical","mode":"or","rules":[{"protocol":"dns"},{"port":53}],"outbound":"dns"},{"type":"logical","mode":"or","rules":[{"protocol":"stun"},{"port":853},{"network":"udp","port":443}],"outbound":"block"},{"domain_suffix":["yacd.haishan.me","yacd.metacubex.one","splashtop.com"],"outbound":"direct"},{"rule_set":["geosite-private","geosite-cn","geoip-private","geoip-cn"],"outbound":"china"}],"rule_set":[{"type":"remote","tag":"geoip-private","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geoip/rule-set/geoip-private.srs","download_detour":"direct"},{"type":"remote","tag":"geoip-cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geoip/rule-set/geoip-cn.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-private","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-private.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-cn.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-geolocation-!cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-geolocation-!cn.srs","download_detour":"direct"}],"auto_detect_interface":true},"experimental":{"cache_file":{"enabled":true,"store_fakeip":true},"clash_api":{"external_controller":"0.0.0.0:9090","external_ui":"yacd","external_ui_download_url":"https://repo.o2cdn.icu/cached-apps/sing-box/gh-pages.zip","external_ui_download_detour":"direct"}}}' >"$singbox_rule"
+	fi
+
+	if [ ! -e "$singbox_inbound" ]; then
+		echo '{"inbounds":[{"type":"tun","tag":"tun-in","inet4_address":"172.19.0.1/30","inet6_address":"fdfe:dcba:9876::1/126","auto_route":true,"strict_route":true,"stack":"gvisor","sniff":true,"sniff_override_destination":true},{"type":"mixed","tag":"mixed-in","listen":"::","listen_port":1080}]}' >"$singbox_inbound"
+	fi
+
+	if ! "$pkg_dst_cmd" format -w -c "$singbox_rule" >/dev/null 2>&1; then
+		echo "$(t_red '文件格式错误 $singbox_rule')"
+		exit 1
+	fi
+
+	if ! "$pkg_dst_cmd" format -w -c "$singbox_inbound" >/dev/null 2>&1; then
+		echo "$(t_red '文件格式错误 $singbox_inbound')"
+		exit 1
+	fi
+
+	if ! "$pkg_dst_cmd" format -w -c "$singbox_outbound" >/dev/null 2>&1; then
+		echo "$(t_red '文件格式错误 $singbox_outbound')"
+		exit 1
+	fi
+
+	if ! "$pkg_dst_cmd" merge "$singbox_config" -c "$singbox_rule" -c "$singbox_inbound" -c "$singbox_outbound" >/dev/null 2>&1; then
+		echo "$(t_red '错误,请重启电脑,路由器,光猫后再次尝试.')"
+		exit 1
+	fi
+
+	# Update pacfile
+	pac_file="$HOME/.local/share/sing-box/yacd/pac.txt"
+
+	cd "$TMP_PATH"
+
+	if [ ! -e "$pac_file" ]; then
+		(pkg_download "https://repo.o2cdn.icu/cached-apps/sing-box/gh-pages.tar.gz" "gh-pages.tar.gz" "yacd" >/dev/null 2>&1) && tar xf "gh-pages.tar.gz" -C "$singbox_workdir" && mv "$singbox_workdir/yacd-gh-pages" "$singbox_workdir/yacd" || true
+	else
+		pac_port=$(head -n 1 "$pac_file" | awk 'match($0, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+/) { print substr($0, RSTART, RLENGTH) }' | awk -F: '{print $2}')
+		mixed_port=$(awk '/mixed-in/ {found=1; next} found && /[0-9]+/ {match($0, /[0-9]+/); print substr($0, RSTART, RLENGTH); exit}' "$singbox_config")
+		external_controller_port=$(awk '/external_controller/ { match($0, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+/); ip_port = substr($0, RSTART, RLENGTH); split(ip_port, arr, ":"); print arr[2]; }' "$singbox_config")
+
+		if [ "$pac_port" != "$mixed_port" ]; then
+			cmd_sed "s/$pac_port/$mixed_port/g" "$pac_file"
+		fi
+	fi
+
+	cache_db="$singbox_workdir/cache.db"
+	if [ ! -e "$cache_db" ]; then
+		(pkg_download "https://repo.o2cdn.icu/cached-apps/sing-box/cache.db" "$cache_db" "cache.db" >/dev/null 2>&1) || true
+	fi
+); }
+
+singbox_start() {
+	if [ -e "$singbox_config" ]; then
+		mixed_port=$(awk '/mixed-in/ {found=1; next} found && /[0-9]+/ {match($0, /[0-9]+/); print substr($0, RSTART, RLENGTH); exit}' "$singbox_config")
+		external_controller_port=$(awk '/external_controller/ { match($0, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+/); ip_port = substr($0, RSTART, RLENGTH); split(ip_port, arr, ":"); print arr[2]; }' "$singbox_config")
+		socks5="127.0.0.1:${mixed_port:=1080}"
+		yacd="http://127.0.0.1:${external_controller_port:-9090}/ui/#/proxies"
+	else
+		echo "$(t_red '找不到配置文件 $singbox_config')"
+		exit 1
+	fi
+
+	cmd_sudo echo "" >"$singbox_log"
+	(
+		for i in {1..60}; do
+			if grep -q "sing-box started" "$singbox_log"; then
+				if grep -q "inbound/tun.*started" "$singbox_log"; then
+					echo "    Connection: tun"
+					echo "        SOCKS5: $socks5"
+					echo "          yacd: $yacd"
+					echo "$(t_green 'sing-box running...')"
+				else
+					echo "    Connection: system proxy"
+					echo "        SOCKS5: $socks5"
+					echo "          yacd: $yacd"
+					echo "$(t_green 'sing-box running...')"
+				fi
+
+				sleep 3
+				open_url=$(command -v start || command -v open || command -v xdg-open)
+				if [ -n "${dev:-}" ]; then
+					$open_url "$yacd"
+				else
+					$open_url "https://ipv4.geojs.io" && $open_url "https://youtube.com" && $open_url "$yacd"
+				fi
+
+				break
+			fi
+			sleep 1
+		done
+	) &
+
+	trap 'printf "\r%s\n" "$(t_red "sing-box stopped.")"; exit' INT
+
+	printf "\r%s %s %s\n" "$(t_cyan 'Start')" "$(t_cyan "sing-box")" "$(t_cyan '...')"
+
+	for i in {1..2}; do
+		cmd_sudo "$pkg_dst_cmd" run -c "$singbox_config" -D "$singbox_workdir" && break || sleep 1s
+	done
+
+	if [ "$OS" = "windows" ]; then
+		echo '{"inbounds":[{"type":"mixed","tag":"mixed-in","listen":"::","listen_port":1080,"set_system_proxy":true}]}' >"$singbox_inbound"
+		"$pkg_dst_cmd" format -w -c "$singbox_inbound" >/dev/null 2>&1
+		if ! "$pkg_dst_cmd" merge "$singbox_config" -c "$singbox_rule" -c "$singbox_inbound" -c "$singbox_outbound" >/dev/null 2>&1; then
+			echo "$(t_red '错误,请重启电脑,路由器,光猫后再次尝试.')"
+			exit 1
+		fi
+		"$pkg_dst_cmd" run -c "$singbox_config" -D "$singbox_workdir"
+	fi
+}
+
+# 红色文本
+t_red() { (fn_printf '\e[31m%s\e[39m' "${1}"); }
+# 绿色文本
+t_green() { (fn_printf '\e[32m%s\e[39m' "${1}"); }
+# 黄色文本
+t_yellow() { (fn_printf '\e[33m%s\e[39m' "${1}"); }
+# 蓝色文本
+t_blue() { (fn_printf '\e[34m%s\e[39m' "${1}"); }
+# 品红文本
+t_magenta() { (fn_printf '\e[35m%s\e[39m' "${1}"); }
+# 青色文本
+t_cyan() { (fn_printf '\e[36m%s\e[39m' "${1}"); }
+# 灰色文本
+t_gray() { (fn_printf '\e[90m%s\e[39m' "${1}"); }
+
+fn_printf() { (
+	a_style="${1}"
+	a_text="${2}"
+	printf -- "${a_style}" "${a_text}"
+); }
+
+if [ ! -e "/tmp/0128.tmp" ]; then
+	rm -rf $HOME/.local/*/sing-box*
+	rm -rf /tmp/sing-box/*
+	wait
+	touch "/tmp/0128.tmp"
+fi
 
 init_arch
 init_os
@@ -832,90 +640,76 @@ init_os
 case "$OS" in
 darwin)
 	ask_password
-	sudo_cmd pkill sing-box >/dev/null 2>&1
+	cmd_sudo pkill sing-box >/dev/null 2>&1
 	;;
 linux)
 	ask_password
-	sudo_cmd pkill sing-box >/dev/null 2>&1
+	cmd_sudo pkill sing-box >/dev/null 2>&1
 	;;
 windows)
-	echo ""
-	echo -e "以下软件可能会干扰 sing-box 的正常运行，请退出："
-	echo ""
-	echo -e "Clash V2ray Shadowsocks 360安全卫士 腾讯电脑管家 联想电脑管家 火绒"
-	process_stop "sing-box.exe"
+	cmd_process_stop "sing-box.exe"
+	windows_version=$(wmic os get Version | awk 'NR==2{print $1}')
+	if [[ $windows_version == *"6.1"* ]]; then
+		ARCH="amd64-legacy"
+	fi
 	;;
 esac
 
-WEBI_PKG="sing-box"
+args=$(awk 'BEGIN { for(i = 1; i < ARGC; i++) print ARGV[i] }' "$@")
+
+for arg in $args; do
+	case $arg in
+	https://*)
+		url=$arg
+		;;
+	version=*)
+		version=${arg#*=}
+		;;
+	arch=*)
+		ARCH=${arg#*=}
+		;;
+	inbound=*)
+		inbound=${arg#*=}
+		;;
+	dev)
+		dev=true
+		;;
+	redir_host)
+		redir_host=true
+		;;
+	esac
+done
+
+set -e
+set -u
+
 PKG_NAME="sing-box"
-PKG_VERSION="${VERSION:-1.7.2}"
+PKG_OS="${OS}"
+PKG_ARCH="${ARCH}"
+PKG_VERSION="${version:-1.8.4}"
 PKG_TAG="v${PKG_VERSION}"
-# PKG_RELEASES="https://ghproxy.com/https://github.com/SagerNet/sing-box/releases/download"
-PKG_RELEASES="https://repo.o2cdn.icu/cached-apps/sing-box"
+PKG_EXT="tar.gz"
 if [ "$OS" = "windows" ]; then
-	PKG_EXT=zip
-else
-	PKG_EXT=tar.gz
+	PKG_EXT="zip"
 fi
-PKG_FILE_NAME="${PKG_NAME}-${PKG_VERSION}-${OS}-${ARCH}.${PKG_EXT}"
-PKG_DOWNLOAD_URL="${PKG_RELEASES}/${PKG_TAG}/${PKG_FILE_NAME}"
-PKG_DOWNLOAD_PATH="${HOME}/.local/tmp/${PKG_NAME}"
+PKG_RELEASES="https://repo.o2cdn.icu/cached-apps/sing-box"
+PKG_FILE="${PKG_NAME}-${PKG_VERSION}-${PKG_OS}-${PKG_ARCH}.${PKG_EXT}"
+PKG_URL="${PKG_RELEASES}/${PKG_TAG}/${PKG_FILE}"
+PKG_PATH="/tmp/${PKG_NAME}"
+TMP_PATH=${TMP_PATH:-"$(mktemp -d -t install-"${PKG_NAME}".XXXXXXXX)"}
 
-singbox_workdir="${HOME}/.local/share/sing-box"
-singbox_log_file="${singbox_workdir}/box.log"
-
-config_url="${URL:-}"
-config_file="${singbox_workdir}/config.json"
-
-# geoip_url="https://ghproxy.com/https://github.com/caocaocc/sing-geoip/releases/latest/download/geoip-asn-cn-private.db"
-geoip_url="https://repo.o2cdn.icu/cached-apps/sing-box/geoip-asn-cn-private.db"
-geoip_file="${singbox_workdir}/geoip.db"
-
-# geosite_url="https://ghproxy.com/https://github.com/caocaocc/sing-geosite/releases/latest/download/geosite.db"
-geosite_url="https://repo.o2cdn.icu/cached-apps/sing-box/geosite.db"
-geosite_file="${singbox_workdir}/geosite.db"
-
-# yacd_url="https://ghproxy.com/https://github.com/caocaocc/yacd/archive/gh-pages.tar.gz"
-yacd_url="https://repo.o2cdn.icu/cached-apps/sing-box/gh-pages.tar.gz"
-yacd_file="${PKG_DOWNLOAD_PATH}/yacd.tar.gz"
-yacd_path="${singbox_workdir}/yacd"
-pac_file="${yacd_path}/pac.txt"
-
-##
-## Set up tmp, download, and install directories
-##
-
-TMP_DIR=${TMP_DIR:-"$(mktemp -d -t "${WEBI_PKG-}".XXXXXXXX)"}
-
-mkdir -p "${PKG_DOWNLOAD_PATH}"
-mkdir -p "${singbox_workdir}"
+mkdir -p "${PKG_PATH}"
 mkdir -p "$HOME/.local/bin"
 mkdir -p "$HOME/.local/opt"
+mkdir -p "$HOME/.local/share"
 
-##
-## Detect http client
-##
-UA="$(uname -s)/$(uname -r) $(uname -m)/unknown"
-set +e
-WEBI_CURL="$(command -v curl)"
-export WEBI_CURL
-WEBI_WGET="$(command -v wget)"
-export WEBI_WGET
-set -e
+singbox_workdir="${HOME}/.local/share/sing-box"
+singbox_config="${singbox_workdir}/config.txt"
+singbox_log="${singbox_workdir}/log.txt"
+singbox_rule="${singbox_workdir}/rule.txt"
+singbox_inbound="${singbox_workdir}/inbound.txt"
+singbox_outbound="${singbox_workdir}/outbound.txt"
 
-bootstrap_pkg
+mkdir -p "${singbox_workdir}"
 
-# # 打印不同颜色的文本
-# echo -e "${RED}红色文本${RESET}"
-# echo -e "${ORANGE}橙色文本${RESET}"
-# echo -e "${YELLOW}黄色文本${RESET}"
-# echo -e "${GREEN}绿色文本${RESET}"
-# echo -e "${BLUE}蓝色文本${RESET}"
-# echo -e "${INDIGO}靛蓝色文本${RESET}"
-# echo -e "${VIOLET}紫罗兰色文本${RESET}"
-# echo -e "${PINK}粉色文本${RESET}"
-#
-# # 打印加粗和下划线文本
-# echo -e "${BOLD}加粗文本${RESET}"
-# echo -e "${UNDERLINE}下划线文本${RESET}"
+bootstrap_pkg "$@"
