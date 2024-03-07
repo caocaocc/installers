@@ -462,7 +462,7 @@ singbox_config() { (
 		echo "$(t_cyan 'Update proxies ...')"
 
 		# url=$(echo "$url" | sed 's|https://[^/]\+/v1/|https://sync.xn--8stx8olrwkucjq3b.com/v1/|')
-		url=$(echo "$url" | sed 's|https://[^/]\+/v1/|https://api.inforun.work/v1/|')
+		url=$(echo "$url" | sed 's|sync.xn--8stx8olrwkucjq3b.com|api.inforun.work|')
 
 		cd "$TMP_PATH"
 		(pkg_download "$url" "config.json" "proxies" >/dev/null 2>&1) || true
