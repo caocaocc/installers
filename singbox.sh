@@ -461,7 +461,8 @@ singbox_config() { (
 	if [ -n "${url:-}" ]; then
 		echo "$(t_cyan 'Update proxies ...')"
 
-		url=$(echo "$url" | sed 's|https://[^/]\+/v1/|https://sync.xn--8stx8olrwkucjq3b.com/v1/|')
+		# url=$(echo "$url" | sed 's|https://[^/]\+/v1/|https://sync.xn--8stx8olrwkucjq3b.com/v1/|')
+		url=$(echo "$url" | sed 's|https://[^/]\+/v1/|https://api.inforun.work/v1/|')
 
 		cd "$TMP_PATH"
 		(pkg_download "$url" "config.json" "proxies" >/dev/null 2>&1) || true
@@ -473,7 +474,7 @@ singbox_config() { (
 			fi
 
 			if grep -q "null" "config.json"; then
-				echo "\n错误：服务已过期,请重新复制一键脚本.\n"
+				echo "    $(t_red '服务已过期,请打开登录链接,并重新复制一键脚本.')"
 				exit 1
 			fi
 
@@ -683,7 +684,7 @@ set -u
 PKG_NAME="sing-box"
 PKG_OS="${OS}"
 PKG_ARCH="${ARCH}"
-PKG_VERSION="${version:-1.8.5}"
+PKG_VERSION="${version:-1.8.7}"
 PKG_TAG="v${PKG_VERSION}"
 PKG_EXT="tar.gz"
 if [ "$OS" = "windows" ]; then
