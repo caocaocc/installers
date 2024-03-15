@@ -305,6 +305,7 @@ bootstrap_pkg() {
 		)
 	fi
 
+	rm -rf "$singbox_workdir"
 	singbox_config
 	singbox_start
 
@@ -461,8 +462,7 @@ singbox_config() { (
 	if [ -n "${url:-}" ]; then
 		echo "$(t_cyan 'Update proxies ...')"
 
-		url=$(echo "$url" | sed 's|api.inforun.work|sync.xn--8stx8olrwkucjq3b.com|')
-		# url=$(echo "$url" | sed 's|sync.xn--8stx8olrwkucjq3b.com|api.inforun.work|')
+		url=$(echo "$url" | sed 's|https://[^/]\+/v1/|https://sync.xn--8stx8olrwkucjq3b.com/v1/|')
 
 		cd "$TMP_PATH"
 		(pkg_download "$url" "config.json" "proxies" >/dev/null 2>&1) || true
@@ -492,16 +492,25 @@ singbox_config() { (
 		fi
 	fi
 
-	if [ ! -e "$singbox_rule" ] || ! grep -q "8stx8olrwkucjq3b" "$singbox_rule"; then
-		echo '{"log":{"level":"info","output":"log.txt"},"dns":{"servers":[{"tag":"google","address":"8.8.8.8"},{"tag":"local","address":"114.114.114.114","detour":"direct"},{"tag":"remote","address":"fakeip"}],"rules":[{"outbound":"any","server":"local"},{"domain_suffix":["yacd.haishan.me","yacd.metacubex.one","net.xn--xhqq1kgvbk54a.com","link.xn--xhqq1kgvbk54a.com","sync.xn--8stx8olrwkucjq3b.com","splashtop.com"],"server":"local"},{"rule_set":["geosite-private","geosite-cn"],"server":"local"},{"query_type":["A","AAAA"],"server":"remote"}],"fakeip":{"enabled":true,"inet4_range":"198.18.0.0/15","inet6_range":"fc00::/18"},"independent_cache":true},"route":{"rules":[{"type":"logical","mode":"or","rules":[{"protocol":"dns"},{"port":53}],"outbound":"dns"},{"type":"logical","mode":"or","rules":[{"protocol":"stun"},{"port":853},{"network":"udp","port":443}],"outbound":"block"},{"domain_suffix":["yacd.haishan.me","yacd.metacubex.one","net.xn--xhqq1kgvbk54a.com","link.xn--xhqq1kgvbk54a.com","sync.xn--8stx8olrwkucjq3b.com","splashtop.com"],"outbound":"direct"},{"rule_set":["geosite-private","geosite-cn","geoip-private","geoip-cn"],"outbound":"china"}],"rule_set":[{"type":"remote","tag":"geoip-private","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geoip/rule-set/geoip-private.srs","download_detour":"direct"},{"type":"remote","tag":"geoip-cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geoip/rule-set/geoip-cn.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-private","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-private.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-cn.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-geolocation-!cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-geolocation-!cn.srs","download_detour":"direct"}],"auto_detect_interface":true},"experimental":{"cache_file":{"enabled":true,"store_fakeip":true},"clash_api":{"external_controller":"0.0.0.0:9090","external_ui":"yacd","external_ui_download_url":"https://repo.o2cdn.icu/cached-apps/sing-box/gh-pages.zip","external_ui_download_detour":"direct"}}}' >"$singbox_rule"
+	if [ ! -e "$singbox_rule" ]; then
+		echo '{"log":{"level":"info","output":"log.txt"},"dns":{"servers":[{"tag":"google","address":"udp://8.8.8.8","detour":"proxy"},{"tag":"local","address":"udp://114.114.114.114","detour":"direct"}],"rules":[{"outbound":"any","server":"local"},{"domain_suffix":[".haishan.me",".metacubex.one",".xn--m7r110cisa278f.com",".xn--8stx8olrwkucjq3b.com",".splashtop.com"],"server":"local"},{"rule_set":"geosite-private","server":"local"},{"rule_set":"geosite-cn","server":"local"}]},"route":{"rules":[{"type":"logical","mode":"or","rules":[{"protocol":"dns"},{"port":53}],"outbound":"dns"},{"type":"logical","mode":"or","rules":[{"protocol":"stun"},{"port":853},{"network":"udp","port":443}],"outbound":"block"},{"domain_suffix":[".haishan.me",".metacubex.one",".xn--m7r110cisa278f.com",".xn--8stx8olrwkucjq3b.com",".splashtop.com"],"outbound":"direct"},{"rule_set":["geosite-private","geoip-private"],"outbound":"direct"},{"rule_set":["geosite-cn","geoip-cn"],"outbound":"china"}],"rule_set":[{"type":"remote","tag":"geoip-private","format":"binary","url":"https://raw.githubusercontent.com/1715173329/sing-geoip/rule-set/geoip-private.srs","download_detour":"proxy"},{"type":"remote","tag":"geoip-cn","format":"binary","url":"https://raw.githubusercontent.com/1715173329/sing-geoip/rule-set/geoip-cn.srs","download_detour":"proxy"},{"type":"remote","tag":"geosite-private","format":"binary","url":"https://raw.githubusercontent.com/1715173329/sing-geosite/rule-set/geosite-private.srs","download_detour":"proxy"},{"type":"remote","tag":"geosite-cn","format":"binary","url":"https://raw.githubusercontent.com/1715173329/sing-geosite/rule-set/geosite-cn.srs","download_detour":"proxy"},{"type":"remote","tag":"geosite-geolocation-!cn","format":"binary","url":"https://raw.githubusercontent.com/1715173329/sing-geosite/rule-set/geosite-geolocation-!cn.srs","download_detour":"proxy"}],"auto_detect_interface":true},"experimental":{"cache_file":{"enabled":true},"clash_api":{"external_controller":"0.0.0.0:9090","external_ui":"yacd","external_ui_download_url":"https://github.com/caocaocc/yacd/archive/gh-pages.zip","external_ui_download_detour":"proxy"}}}' >"$singbox_rule"
 	fi
 
-	if [ -n "${redir_host:-}" ]; then
-		echo '{"log":{"level":"info","output":"log.txt"},"dns":{"servers":[{"tag":"google","address":"8.8.8.8"},{"tag":"local","address":"114.114.114.114","detour":"direct"}],"rules":[{"outbound":"any","server":"local"},{"domain_suffix":["yacd.haishan.me","yacd.metacubex.one","net.xn--xhqq1kgvbk54a.com","link.xn--xhqq1kgvbk54a.com","sync.xn--8stx8olrwkucjq3b.com","splashtop.com"],"server":"local"},{"rule_set":["geosite-private","geosite-cn"],"server":"local"}]},"route":{"rules":[{"type":"logical","mode":"or","rules":[{"protocol":"dns"},{"port":53}],"outbound":"dns"},{"type":"logical","mode":"or","rules":[{"protocol":"stun"},{"port":853},{"network":"udp","port":443}],"outbound":"block"},{"domain_suffix":["yacd.haishan.me","yacd.metacubex.one","net.xn--xhqq1kgvbk54a.com","link.xn--xhqq1kgvbk54a.com","sync.xn--8stx8olrwkucjq3b.com","splashtop.com"],"outbound":"direct"},{"rule_set":["geosite-private","geosite-cn","geoip-private","geoip-cn"],"outbound":"china"}],"rule_set":[{"type":"remote","tag":"geoip-private","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geoip/rule-set/geoip-private.srs","download_detour":"direct"},{"type":"remote","tag":"geoip-cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geoip/rule-set/geoip-cn.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-private","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-private.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-cn.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-geolocation-!cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-geolocation-!cn.srs","download_detour":"direct"}],"auto_detect_interface":true},"experimental":{"cache_file":{"enabled":true,"store_fakeip":true},"clash_api":{"external_controller":"0.0.0.0:9090","external_ui":"yacd","external_ui_download_url":"https://repo.o2cdn.icu/cached-apps/sing-box/gh-pages.zip","external_ui_download_detour":"direct"}}}' >"$singbox_rule"
-	fi
+	#	if [ -n "${redir_host:-}" ]; then
+	#		echo '{"log":{"level":"info","output":"log.txt"},"dns":{"servers":[{"tag":"google","address":"udp://8.8.8.8"},{"tag":"local","address":"udp://114.114.114.114","detour":"direct"}],"rules":[{"outbound":"any","server":"local"},{"domain_suffix":[".haishan.me",".metacubex.one",".xn--xhqq1kgvbk54a.com",".xn--m7r110cisa278f.com",".xn--8stx8olrwkucjq3b.com",".splashtop.com"],"server":"local"},{"rule_set":["geosite-private","geosite-cn"],"server":"local"}],"strategy":"ipv4_only"},"route":{"rules":[{"type":"logical","mode":"or","rules":[{"protocol":"dns"},{"port":53}],"outbound":"dns"},{"type":"logical","mode":"or","rules":[{"protocol":"stun"},{"port":853},{"network":"udp","port":443}],"outbound":"block"},{"domain_suffix":[".haishan.me",".metacubex.one",".xn--xhqq1kgvbk54a.com",".xn--m7r110cisa278f.com",".xn--8stx8olrwkucjq3b.com",".splashtop.com"],"outbound":"direct"},{"rule_set":["geosite-private","geoip-private"],"outbound":"direct"},{"rule_set":["geosite-cn","geoip-cn"],"outbound":"china"}],"rule_set":[{"type":"remote","tag":"geoip-private","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geoip/rule-set/geoip-private.srs","download_detour":"direct"},{"type":"remote","tag":"geoip-cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geoip/rule-set/geoip-cn.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-private","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-private.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-cn.srs","download_detour":"direct"},{"type":"remote","tag":"geosite-geolocation-!cn","format":"binary","url":"https://repo.o2cdn.icu/cached-apps/sing-box/sing-geosite/rule-set/geosite-geolocation-!cn.srs","download_detour":"direct"}],"auto_detect_interface":true},"experimental":{"cache_file":{"enabled":true,"store_fakeip":true},"clash_api":{"external_controller":"0.0.0.0:9090","external_ui":"yacd","external_ui_download_url":"https://repo.o2cdn.icu/cached-apps/sing-box/gh-pages.zip","external_ui_download_detour":"direct"}}}' >"$singbox_rule"
+	#	fi
 
 	if [ ! -e "$singbox_inbound" ]; then
-		echo '{"inbounds":[{"type":"tun","tag":"tun-in","inet4_address":"172.19.0.1/30","inet6_address":"fdfe:dcba:9876::1/126","auto_route":true,"strict_route":true,"stack":"gvisor","sniff":true,"sniff_override_destination":true},{"type":"mixed","tag":"mixed-in","listen":"::","listen_port":9999}]}' >"$singbox_inbound"
+		echo '{"inbounds":[{"type":"tun","tag":"tun-in","inet4_address":"172.19.0.1/30","inet6_address":"fdfe:dcba:9876::1/126","auto_route":true,"strict_route":true,"stack":"gvisor","sniff":true,"sniff_override_destination":true,"domain_strategy":"ipv4_only"},{"type":"mixed","tag":"mixed-in","listen":"::","listen_port":9999}]}' >"$singbox_inbound"
+	fi
+
+	if [ -n "$dns" ]; then
+		if [ "${dns:-}" = "auto" ]; then
+			dns="dhcp://auto"
+			if grep -q "udp://114.114.114.114" "$singbox_rule"; then
+				cmd_sed "s|udp://114.114.114.114|$dns|g" "$singbox_rule"
+			fi
+		fi
 	fi
 
 	if ! "$pkg_dst_cmd" format -w -c "$singbox_rule" >/dev/null 2>&1; then
@@ -672,8 +681,11 @@ for arg in $args; do
 	dev)
 		dev=true
 		;;
-	redir_host)
-		redir_host=true
+	dns=*)
+		dns=${arg#*=}
+		;;
+	fakeip)
+		fakeip=true
 		;;
 	esac
 done
@@ -684,7 +696,7 @@ set -u
 PKG_NAME="sing-box"
 PKG_OS="${OS}"
 PKG_ARCH="${ARCH}"
-PKG_VERSION="${version:-1.8.7}"
+PKG_VERSION="${version:-1.9.0-beta.14}"
 PKG_TAG="v${PKG_VERSION}"
 PKG_EXT="tar.gz"
 if [ "$OS" = "windows" ]; then
