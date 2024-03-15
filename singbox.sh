@@ -504,7 +504,7 @@ singbox_config() { (
 		echo '{"inbounds":[{"type":"tun","tag":"tun-in","inet4_address":"172.19.0.1/30","inet6_address":"fdfe:dcba:9876::1/126","auto_route":true,"strict_route":true,"stack":"gvisor","sniff":true,"sniff_override_destination":true,"domain_strategy":"ipv4_only"},{"type":"mixed","tag":"mixed-in","listen":"::","listen_port":9999}]}' >"$singbox_inbound"
 	fi
 
-	if [ -n "$dns" ]; then
+	if [ -n "${dns:-}" ]; then
 		if [ "${dns:-}" = "auto" ]; then
 			dns="dhcp://auto"
 			if grep -q "udp://114.114.114.114" "$singbox_rule"; then
