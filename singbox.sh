@@ -505,7 +505,7 @@ singbox_config() { (
 	fi
 
 	if [ -n "${dns:-}" ]; then
-		if [ "${dns:-}" = "auto" ]; then
+		if [ "$dns" = "auto" ]; then
 			dns="dhcp://auto"
 			if grep -q "udp://114.114.114.114" "$singbox_rule"; then
 				cmd_sed "s|udp://114.114.114.114|$dns|g" "$singbox_rule"
