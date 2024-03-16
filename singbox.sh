@@ -305,7 +305,6 @@ bootstrap_pkg() {
 		)
 	fi
 
-	rm -rf "$singbox_workdir"
 	singbox_config
 	singbox_start
 
@@ -696,7 +695,7 @@ set -u
 PKG_NAME="sing-box"
 PKG_OS="${OS}"
 PKG_ARCH="${ARCH}"
-PKG_VERSION="${version:-1.8.8}"
+PKG_VERSION="${version:-1.8.9}"
 PKG_TAG="v${PKG_VERSION}"
 PKG_EXT="tar.gz"
 if [ "$OS" = "windows" ]; then
@@ -719,6 +718,11 @@ singbox_log="${singbox_workdir}/log.txt"
 singbox_rule="${singbox_workdir}/rule.txt"
 singbox_inbound="${singbox_workdir}/inbound.txt"
 singbox_outbound="${singbox_workdir}/outbound.txt"
+
+if [ ! -d "$HOME/.local/opt/${PKG_NAME}-${PKG_TAG}" ] && [ -d "$HOME/.local/share/${PKG_NAME}" ]; then
+	rm -rf "$HOME/.local/share/sing-box" &
+	wait
+fi
 
 mkdir -p "${singbox_workdir}"
 
