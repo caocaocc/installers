@@ -696,7 +696,7 @@ set -u
 PKG_NAME="sing-box"
 PKG_OS="${OS}"
 PKG_ARCH="${ARCH}"
-PKG_VERSION="${version:-1.8.14}"
+PKG_VERSION="${version:-1.9.5}"
 PKG_TAG="v${PKG_VERSION}"
 PKG_EXT="tar.gz"
 if [ "$OS" = "windows" ]; then
